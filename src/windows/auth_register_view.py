@@ -1,6 +1,6 @@
 from PyQt6 import uic, QtWidgets, QtGui
 from PyQt6.QtGui import QPixmap, QPainter
-from PyQt6.QtWidgets import QMessageBox, QMainWindow
+from PyQt6.QtWidgets import QMainWindow
 from PyQt6.QtCore import Qt
 import pymysql
 import re
@@ -42,8 +42,8 @@ class SignUp(QMainWindow):
         self.edit_foto.clicked.connect(self.buscar_foto)
 
     def voltar_login(self):
-        from src.windows.auth_login_view import LoginWindow  # <- Importa aqui para evitar importações circulares
-        self.login_window = LoginWindow()
+        from src.windows.auth_login_view import Login  # <- Importa aqui para evitar importações circulares
+        self.login_window = Login()
         self.login_window.show()
         self.close()
 
@@ -156,7 +156,7 @@ class SignUp(QMainWindow):
 
             self.sql.editar(insert_query, valores)
 
-            QMessageBox.information(self, "Sucesso", "Cadastro realizado com sucesso!")
+            MessageBox.show_custom_messagebox(self, "information", "Sucesso", "Cadastro realizado com sucesso!")
             self.limpar_campos()
             
             self.voltar_login()

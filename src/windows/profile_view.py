@@ -22,7 +22,7 @@ UI_PATH = Path(__file__).resolve().parent.parent.parent / "ui" / "profile.ui"
 
 current_script_path = Path(__file__).resolve()
 parent_directory = current_script_path.parent.parent
-sys.path.append(str(parent_directory / 'assets/png'))
+sys.path.append(str(parent_directory.parent / 'assets/png'))
 sys.path.append(str(parent_directory))
 
 class ClienteWindow(QtWidgets.QMainWindow):
@@ -97,7 +97,7 @@ class ClienteWindow(QtWidgets.QMainWindow):
         if foto:
             self.set_foto(foto)
         else:
-            with open(str(parent_directory / 'assets/png/user.png'), 'rb') as f:
+            with open(str(parent_directory.parent / 'assets/png/user.png'), 'rb') as f:
                 self.foto_bytes = f.read()
             self.set_foto(self.foto_bytes)
 
