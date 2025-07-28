@@ -204,10 +204,10 @@ class ClienteWindow(QtWidgets.QMainWindow):
         #       "\nCelular: " + celular, "\nSalário: " + salario, "\nPaís: " + pais, "\n")
         
     def logoff(self):
-        from src.windows.auth_login_view import LoginWindow #importação tardia pra evitar importação circular
+        from src.windows.auth_login_view import Login #importação tardia pra evitar importação circular
         self.close()
         self.home_window.close()
-        self.login_window = LoginWindow()
+        self.login_window = Login()
         self.login_window.show()
         
     def reopen_home(self):
@@ -226,10 +226,10 @@ class ClienteWindow(QtWidgets.QMainWindow):
                 
                 MessageBox.show_custom_messagebox(self, "information", "Conta desativada", "Conta desativada com sucesso.")
 
-                from src.windows.auth_login_view import LoginWindow #importação tardia pra evitar importação circular
+                from src.windows.auth_login_view import Login #importação tardia pra evitar importação circular
                 self.close()
                 self.home_window.close()
-                self.login_window = LoginWindow()
+                self.login_window = Login()
                 self.login_window.show()
             except Exception as e:
                 MessageBox.show_custom_messagebox(self, "error", "Erro", "Não foi possível desativar a conta.")

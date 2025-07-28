@@ -69,9 +69,9 @@ class HomeWindow(QMainWindow):
  
 
     def logoff(self):
-        from src.windows.auth_login_view import LoginWindow #importação tardia pra evitar importação circular
+        from src.windows.auth_login_view import Login #importação tardia pra evitar importação circular
         self.close()
-        self.login_window = LoginWindow()
+        self.login_window = Login()
         self.login_window.show()
 
     def atualizar_grafico_global(self):
