@@ -1,19 +1,38 @@
+import os
 from pathlib import Path
 import sys
 from PyQt6 import uic
 from PyQt6.QtWidgets import QMainWindow
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QTranslator
 
 from src.windows import profile_view, transactions_view, report_view
+from src.util.formatter import Formatter
 
 from src.util.db_manager import ConsultaSQL
 from src.util.dashboard_manager import Grafico
+from src.util.language_manager import LanguageManager as lm
 from src.util import icons_rc
 
-UI_PATH = Path(__file__).resolve().parent.parent.parent / "ui" / "dashboard.ui"
+from dotenv import load_dotenv
+
+load_dotenv()
+DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
+
+if DEBUG_MODE:
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
+else:
+    BASE_DIR = Path(sys.executable).parent
+
+UI_PATH = BASE_DIR / "ui" / "dashboard.ui"
 
 class HomeWindow(QMainWindow):
-    def __init__(self, cliente_id, login_status):
+    def __init__(self, cliente_id, login_status, linguagem_atual):
         super().__init__()
+
+        translator = QTranslator()
+        self.linguagem_atual = linguagem_atual
+        lm.trocar_linguagem(QApplication.instance(), translator, linguagem_atual)
 
         uic.loadUi(UI_PATH, self)
 
@@ -25,7 +44,7 @@ class HomeWindow(QMainWindow):
         self.login_status = login_status
 
         # Gráfico
-        self.grafico = Grafico(self.frame_grafico.layout(), self.cliente_id)
+        self.grafico = Grafico(self.frame_grafico.layout(), self.cliente_id, self.linguagem_atual)
         self.cmb_mes.currentIndexChanged.connect(self.atualizar_grafico_global)
 
         # Carrega inicialmente
@@ -39,15 +58,14 @@ class HomeWindow(QMainWindow):
         self.btn_editar.clicked.connect(self.btn_balanco)
         self.btn_perfil.clicked.connect(self.btn_cliente)
 
-
     # === MÉTODOS DOS BOTÕES ===
     def btn_gerar_relatorio(self):
-        popup = report_view.RelatorioWindow(self.cliente_id, self.cmb_mes.currentIndex())
+        popup = report_view.ReportWindow(self.cliente_id, self.cmb_mes.currentIndex(), self.linguagem_atual)
         popup.exec()
         
     def btn_balanco(self):
         if not self.balanco_window:
-            self.balanco_window = transactions_view.TransactionsWindow(self.cliente_id)
+            self.balanco_window = transactions_view.TransactionsWindow(self.cliente_id, self.linguagem_atual)
 
             # Conexões com os sinais
             self.balanco_window.grafico_atualizado.connect(self.atualizar_grafico_global)
@@ -58,7 +76,7 @@ class HomeWindow(QMainWindow):
 
     def btn_cliente(self):
         if not self.perfil_window:
-            self.perfil_window = profile_view.ClienteWindow(self.cliente_id, self.login_status, self)
+            self.perfil_window = profile_view.ClienteWindow(self.cliente_id, self.login_status, self, self.linguagem_atual)
         self.perfil_window.set_labels()
         
         
@@ -71,7 +89,7 @@ class HomeWindow(QMainWindow):
     def logoff(self):
         from src.windows.auth_login_view import Login #importação tardia pra evitar importação circular
         self.close()
-        self.login_window = Login()
+        self.login_window = Login(self.linguagem_atual)
         self.login_window.show()
 
     def atualizar_grafico_global(self):
@@ -89,7 +107,7 @@ class HomeWindow(QMainWindow):
                 ORDER BY transacao_id DESC
                 LIMIT 3
             """
-            registros = db.consultar(query, self.cliente_id)
+            registros = db.consultar(query, int(self.cliente_id))
 
             labels_nome = [self.lbl_produto1, self.lbl_produto2, self.lbl_produto3]
             labels_valor = [self.lbl_valor1, self.lbl_valor2, self.lbl_valor3]
@@ -106,11 +124,11 @@ class HomeWindow(QMainWindow):
             for i, (nome, valor, tipo) in enumerate(registros):
                 nome_formatado = str(nome).title()
 
-                if tipo.lower() == 'saída':
-                    valor_formatado = f"- {transactions_view.tratar_valor_para_exibir(float(valor))}"
+                if tipo.lower() == 'saida':
+                    valor_formatado = f"- {Formatter.format_value_to_display(float(valor))}"
                     cor = "#8D0A0A"
                 else:
-                    valor_formatado = transactions_view.tratar_valor_para_exibir(float(valor))
+                    valor_formatado = Formatter.format_value_to_display(float(valor))
                     cor = "#147117"
                 
                 labels_nome[i].setText(nome_formatado)
@@ -127,20 +145,20 @@ class HomeWindow(QMainWindow):
             db = ConsultaSQL()
 
             query = "SELECT tipo, valor FROM tb_registro WHERE fk_usuario_id = %s"
-            dados = db.pd_consultar(query, self.cliente_id)
+            dados = db.pd_consultar(query, int(self.cliente_id))
 
             if dados.empty:
                 receita = 0
                 despesa = 0
             else:
                 receita = dados[dados['tipo'] == 'entrada']['valor'].sum()
-                despesa = dados[dados['tipo'] == 'saída']['valor'].sum()
+                despesa = dados[dados['tipo'] == 'saida']['valor'].sum()
 
             saldo = receita - despesa
 
-            receita_formatada = transactions_view.tratar_valor_para_exibir(receita)
-            despesa_formatada = transactions_view.tratar_valor_para_exibir(despesa)
-            saldo_formatada = transactions_view.tratar_valor_para_exibir(saldo)
+            receita_formatada = Formatter.format_value_to_display(receita)
+            despesa_formatada = Formatter.format_value_to_display(despesa)
+            saldo_formatada = Formatter.format_value_to_display(saldo)
 
             # Aplica nos labels
             self.lbl_value_receita.setText(receita_formatada)

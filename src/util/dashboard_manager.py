@@ -1,22 +1,40 @@
+import json
+import os
+from pathlib import Path
+import sys
+
+from dotenv import load_dotenv
 from src.util.db_manager import ConsultaSQL
 
 # Bibliotecas para plotagem e manipulação de arrays numéricos
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Utilitários para trabalhar com datas e nomes de meses
-import calendar
-import locale
-
 # Backend que integra matplotlib com interfaces Qt (PyQt5/PyQt6)
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
+load_dotenv()
+DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
+
+if DEBUG_MODE:
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
+else:
+    BASE_DIR = Path(sys.executable).parent
+
+DATA_PATH = BASE_DIR / "src" / "util" / "data_util.json"
+
+with open(DATA_PATH, "r", encoding="utf-8") as f:
+            data_util = json.load(f)
+            translate_graph = data_util['traducao']['graph']
+            translate_month = data_util['traducao']['meses']
+
 # Classe responsável por exibir gráficos em um layout Qt
 class Grafico():
-    def __init__(self, destino_layout, cliente_id):
+    def __init__(self, destino_layout, cliente_id, linguagem_atual):
         self.destino_layout = destino_layout 
         self.sql = ConsultaSQL()       
         self.cliente_id = cliente_id       
+        self.linguagem_atual = linguagem_atual
 
     # Atualiza o gráfico com base no mês selecionado
     def update_grafico(self, mes_selecionado=0):
@@ -24,37 +42,32 @@ class Grafico():
         
         # Caso não seja selecionado mês específico, exibe gráfico por mês/ano agrupado
         if mes_selecionado == 0:
-            try:
-                locale.setlocale(locale.LC_TIME, 'pt_BR.UTF-8')
-            except:
-                locale.setlocale(locale.LC_TIME, 'Portuguese_Brazil')
-            
-            # Consulta os dados agrupando por ano, mês e tipo (entrada/saída)
             query = """
-                SELECT 
-                    YEAR(data_realizada) AS ano,
-                    MONTH(data_realizada) AS mes,
-                    tipo,
-                    SUM(valor) AS total
-                FROM tb_registro
-                WHERE fk_usuario_id = %s
-                GROUP BY ano, mes, tipo
-                ORDER BY ano, mes, tipo
+            SELECT
+                EXTRACT(YEAR FROM data_realizada) AS ano,
+                EXTRACT(MONTH FROM data_realizada) AS mes,
+                tipo,
+                SUM(valor) AS total
+            FROM tb_registro
+            WHERE fk_usuario_id = %s
+            GROUP BY ano, mes, tipo
+            ORDER BY ano, mes, tipo;
             """
-            df = self.sql.pd_consultar(query, self.cliente_id)
-
+            df = self.sql.pd_consultar(query, int(self.cliente_id))
+            
             if df.empty:
-                self._plotar_grafico_vazio("Sem dados disponíveis")
+                self._plotar_grafico_vazio(translate_graph[self.linguagem_atual]['empty_graph'])
                 return
             
             # Cria coluna com rótulo "Mês/Ano" para o eixo X do gráfico
             df["mes_ano"] = df.apply(
-                lambda row: f"{calendar.month_abbr[row['mes']].capitalize()}/{int(row['ano'])}", axis=1
+                lambda row: f"{translate_month[self.linguagem_atual][str(row['mes'])][:3]}/{int(row['ano'])}",
+                axis=1
             )
 
             # Separa os dados em dois DataFrames: entradas e saídas
             df_pos = df[df["tipo"] == 'entrada'].set_index(["ano", "mes"])
-            df_neg = df[df["tipo"] == 'saída'].set_index(["ano", "mes"])
+            df_neg = df[df["tipo"] == 'saida'].set_index(["ano", "mes"])
 
             # Obtém os meses únicos ordenados para construir o eixo X
             chaves_ordenadas = df.drop_duplicates(["ano", "mes"]).sort_values(["ano", "mes"])[["ano", "mes", "mes_ano"]]
@@ -72,47 +85,45 @@ class Grafico():
             # Chama função para plotar o gráfico com os dados gerados
             self._plotar_grafico(
                 x, mes_ano_labels, valores_entrada, valores_saida,
-                titulo="Receita Mensal", eixo_x="Mês/Ano"
+                titulo=translate_graph[self.linguagem_atual]['monthly'], eixo_x=translate_graph[self.linguagem_atual]['mounth_year']
             )
         else:
             # Caso um mês específico seja selecionado, exibe gráfico comparando diferentes anos
             query = """
                 SELECT 
-                    YEAR(data_realizada) AS ano,
+                    EXTRACT(YEAR FROM data_realizada) AS ano,
                     tipo,
                     SUM(valor) AS total
                 FROM tb_registro
-                WHERE MONTH(data_realizada) = %s AND fk_usuario_id = %s
+                WHERE EXTRACT(MONTH FROM data_realizada) = %s AND fk_usuario_id = %s
                 GROUP BY ano, tipo
                 ORDER BY ano
             """
-            df = self.sql.pd_consultar(query, (mes_selecionado, self.cliente_id))
+            df = self.sql.pd_consultar(query, (mes_selecionado, int(self.cliente_id)))
 
             if df.empty:
-                self._plotar_grafico_vazio("Sem dados disponíveis")
+                self._plotar_grafico_vazio(translate_graph[self.linguagem_atual]['empty_graph'])
                 return
             
             anos = sorted(df["ano"].unique())      # Lista dos anos existentes no filtro
             x = np.arange(len(anos))              # Posições no eixo X
 
             # Separa os dados por tipo
-            df_pos = df[df["tipo"] == 'entrada'].set_index("ano")
-            df_neg = df[df["tipo"] == 'saída'].set_index("ano")
+            df_pos = df[df["tipo"] == 'entrada'].set_index('ano')
+            df_neg = df[df["tipo"] == 'saida'].set_index('ano')
 
             # Lista com os valores de entrada e saída por ano
-            valores_entrada = [df_pos.loc[a, "total"] if a in df_pos.index else 0 for a in anos]
-            valores_saida = [df_neg.loc[a, "total"] if a in df_neg.index else 0 for a in anos]
+            valores_entrada = [df_pos.loc[a, 'total'] if a in df_pos.index else 0 for a in anos]
+            valores_saida = [df_neg.loc[a, 'total'] if a in df_neg.index else 0 for a in anos]
 
             # Nomes dos meses em português (manual, evita problemas com locale)
-            MESES_PT = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-                        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
-
-            nome_mes = MESES_PT[mes_selecionado]  # Nome do mês escolhido
+            meses_traduzidos = data_util["traducao"]["meses"][self.linguagem_atual]
+            nome_mes = meses_traduzidos[str(mes_selecionado)]  # Nome do mês escolhido
             
             # Plota gráfico comparativo por ano
             self._plotar_grafico(
                 x, [str(a) for a in anos], valores_entrada, valores_saida,
-                titulo=f"{nome_mes} - Comparativo Anual", eixo_x="Ano"
+                titulo=f"{nome_mes} - {translate_graph[self.linguagem_atual]['year_comparison']}", eixo_x=translate_graph[self.linguagem_atual]['year']
             )
 
     # Função interna para plotar o gráfico com matplotlib
@@ -125,9 +136,9 @@ class Grafico():
 
         width = 0.35  # Largura das barras
         # Plota barras de entrada (esquerda)
-        ax.bar(x - width/2, valores_entrada, width, label='Entradas', color="#057927")
+        ax.bar(x - width/2, valores_entrada, width, label=translate_graph[self.linguagem_atual]['entries'], color="#057927")
         # Plota barras de saída (direita)
-        ax.bar(x + width/2, valores_saida, width, label='Saídas', color='#B40606')
+        ax.bar(x + width/2, valores_saida, width, label=translate_graph[self.linguagem_atual]['outcome'], color='#B40606')
 
         # Adiciona valores no topo de cada barra
         for i in range(len(x)):
@@ -143,7 +154,8 @@ class Grafico():
         ax.set_xticklabels(labels, rotation=45)
         ax.set_title(titulo, fontsize=14)
         ax.set_xlabel(eixo_x)
-        ax.set_ylabel("Total R$")
+        #TODO Pegar a moeda do usuário se tiver essa opção
+        ax.set_ylabel(f"{translate_graph[self.linguagem_atual]['total']} R$")
         ax.legend()  # Legenda do gráfico
         fig.tight_layout()  # Ajusta o layout da figura
 
@@ -161,7 +173,7 @@ class Grafico():
         ax.text(0.5, 0.5, mensagem, fontsize=14, ha='center', va='center', transform=ax.transAxes, color='gray')
         ax.set_xticks([])
         ax.set_yticks([])
-        ax.set_title("Gráfico", fontsize=14)
+        ax.set_title(translate_graph[self.linguagem_atual]['graph_title'], fontsize=14)
 
         canvas = FigureCanvas(fig)
         canvas.updateGeometry()

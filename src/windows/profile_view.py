@@ -1,6 +1,8 @@
 from PyQt6.QtGui import QPixmap, QPainter, QRegion, QBitmap
 from PyQt6 import QtCore, QtWidgets, QtGui, uic
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import QTranslator
+from PyQt6.QtWidgets import QApplication, QMainWindow
 from pathlib import Path
 
 import sys
@@ -13,23 +15,43 @@ from src.util.db_manager import ConsultaSQL
 
 from src.util.qt_util import MessageBox
 from src.util.crypto import CryptoManager
+from src.util.language_manager import LanguageManager as lm
 
 import json
 from pathlib import Path
 
-DATA_PATH = Path(__file__).resolve().parent.parent / "util" / "data_util.json"
-UI_PATH = Path(__file__).resolve().parent.parent.parent / "ui" / "profile.ui"
+from dotenv import load_dotenv
+
+load_dotenv()
+DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
+
+if DEBUG_MODE:
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
+else:
+    BASE_DIR = Path(sys.executable).parent
+
+DATA_PATH = BASE_DIR / "src" / "util" / "data_util.json"
+UI_PATH = BASE_DIR / "ui" / "profile.ui"
+PNG_PATH = BASE_DIR / "assets" / "png" / "user.png"
 
 current_script_path = Path(__file__).resolve()
 parent_directory = current_script_path.parent.parent
-sys.path.append(str(parent_directory.parent / 'assets/png'))
+sys.path.append(str(parent_directory / 'assets/png'))
 sys.path.append(str(parent_directory))
 
-class ClienteWindow(QtWidgets.QMainWindow):
+with open(DATA_PATH, "r", encoding="utf-8") as f:
+            data_util = json.load(f)
+            translate = data_util['traducao']['mensage_box']
+
+class ClienteWindow(QMainWindow):
     btn_home_pressed = pyqtSignal()
     
-    def __init__(self, cliente_id, login_status, home_window):
+    def __init__(self, cliente_id, login_status, home_window, linguagem_atual):
         super().__init__()
+
+        translator = QTranslator()
+        self.linguagem_atual = linguagem_atual
+        lm.trocar_linguagem(QApplication.instance(), translator, linguagem_atual)
 
         uic.loadUi(UI_PATH, self)
 
@@ -60,10 +82,6 @@ class ClienteWindow(QtWidgets.QMainWindow):
         self.edit_celular.setFocus()
     
     def set_labels(self):
-        with open(DATA_PATH, "r", encoding="utf-8") as f:
-            data_util = json.load(f)
-
-        
         lista_paises = data_util['list']['lista_paises']
         lista_ocupacoes = data_util['list']['lista_ocupacoes']
 
@@ -97,13 +115,13 @@ class ClienteWindow(QtWidgets.QMainWindow):
         if foto:
             self.set_foto(foto)
         else:
-            with open(str(parent_directory.parent / 'assets/png/user.png'), 'rb') as f:
+            with open(PNG_PATH, 'rb') as f:
                 self.foto_bytes = f.read()
             self.set_foto(self.foto_bytes)
 
     def get_usuario(self):
         query = "SELECT * FROM tb_usuario WHERE pk_usuario_id = %s"
-        df = self.sql.pd_consultar(query, (self.cliente_id))
+        df = self.sql.pd_consultar(query, int(self.cliente_id))
 
         return df
 
@@ -119,7 +137,7 @@ class ClienteWindow(QtWidgets.QMainWindow):
 
             # Verifica se é imagem válida
             if not file_path.lower().endswith(('.png', '.jpg', '.jpeg')):
-                MessageBox.show_custom_messagebox(self, "error", "Erro", "Selecione uma imagem válida (.png, .jpg, .jpeg).")
+                MessageBox.show_custom_messagebox(self, tipo="error", title=translate[self.linguagem_atual]['error'], message=translate[self.linguagem_atual]['invalid_image_format'])
                 return
             
             with open(file_path, 'rb') as f:
@@ -152,16 +170,13 @@ class ClienteWindow(QtWidgets.QMainWindow):
 
         regex_email = r"^[^@]+@[^@]+\.[^@]+$"
         if not re.match(regex_email, email_temp):
-            MessageBox.show_custom_messagebox(self, "warning", "Aviso", "Email inválido.")
+            MessageBox.show_custom_messagebox(self, tipo="warning", title=translate[self.linguagem_atual]['warning'], message=translate[self.linguagem_atual]['invalid_email'])
             return
-        if len(senha_temp) < 6:
-            MessageBox.show_custom_messagebox(self, "warning", "Aviso", "A senha deve ter ao menos 6 caracteres.")
-            return
-        elif ' ' in senha_temp:
-            MessageBox.show_custom_messagebox(self, "warning", "Aviso", "A senha não pode conter espaços.")
+        if len(senha_temp) < 6 or ' ' in senha_temp:
+            MessageBox.show_custom_messagebox(self, tipo="warning", title=translate[self.linguagem_atual]['warning'], message=translate[self.linguagem_atual]['password_mismatch'])
             return
         if not len(celular_temp) == 13:
-            MessageBox.show_custom_messagebox(self, "warning", "Aviso", "O número de celular deve conter 13 dígitos numéricos.")
+            MessageBox.show_custom_messagebox(self, tipo="warning", title=translate[self.linguagem_atual]['warning'], message=translate[self.linguagem_atual]['phone_length'])
             return
         ddi = celular_temp[0:2]
         ddd = celular_temp[2:4]
@@ -181,13 +196,13 @@ class ClienteWindow(QtWidgets.QMainWindow):
             # Atualiza o banco de dados
             if self.foto_bytes:
                 query = "UPDATE tb_usuario SET email = %s, senha = %s, ocupacao = %s, celular = %s, salario = %s, pais = %s, foto = %s WHERE pk_usuario_id = %s"
-                params = (email, senha, ocupacao, celular, salario, pais, self.foto_bytes, self.get_usuario()["pk_usuario_id"].iloc[0])
+                params = (email, senha, ocupacao, celular, salario, pais, self.foto_bytes, int(self.get_usuario()["pk_usuario_id"].iloc[0]))
             else:
                 query = "UPDATE tb_usuario SET email = %s, senha = %s, ocupacao = %s, celular = %s, salario = %s, pais = %sWHERE pk_usuario_id = %s"
-                params = (email, senha, ocupacao, celular, salario, pais, self.get_usuario()["pk_usuario_id"].iloc[0])
-            df = self.sql.editar(query, params)
+                params = (email, senha, ocupacao, celular, salario, pais, int(self.get_usuario()["pk_usuario_id"].iloc[0]))
+            self.sql.editar(query, params)
         except Exception as e:
-            MessageBox.show_custom_messagebox(self, "error", "Erro", "Não foi possível alterar os dados de usuário.")
+            MessageBox.show_custom_messagebox(self, tipo="error", title=translate[self.linguagem_atual]['error'], message=translate[self.linguagem_atual]['update_user_error'])
             print(e)
             return
         
@@ -196,9 +211,10 @@ class ClienteWindow(QtWidgets.QMainWindow):
             dados = f"{email}\n{senha}"
             with open("lembrete_login.bin", "wb") as f:
                 f.write(CryptoManager.criptografar(dados))
-
-        MessageBox.show_custom_messagebox(self, "information", "Alterar dados", "Dados de perfil atualizados com sucesso.")
         
+        
+        MessageBox.show_custom_messagebox(self, tipo="information", title=translate[self.linguagem_atual]['success'], message=translate[self.linguagem_atual]['user_update_success'])
+            
         #DEBUG
         # print("\nEmail: " + email, "\nSenha: " + senha, "\nOcupação: " + ocupacao,
         #       "\nCelular: " + celular, "\nSalário: " + salario, "\nPaís: " + pais, "\n")
@@ -207,7 +223,7 @@ class ClienteWindow(QtWidgets.QMainWindow):
         from src.windows.auth_login_view import Login #importação tardia pra evitar importação circular
         self.close()
         self.home_window.close()
-        self.login_window = Login()
+        self.login_window = Login(self.linguagem_atual)
         self.login_window.show()
         
     def reopen_home(self):
@@ -215,23 +231,24 @@ class ClienteWindow(QtWidgets.QMainWindow):
         self.hide()
     
     def desativar_conta(self):
-        confirmado = MessageBox.ask_confirmation(self, "Confirmação", "Tem certeza que deseja desativar a conta?")
+        confirmado = MessageBox.ask_confirmation(parent=self, title=translate[self.linguagem_atual]['confirm'], message=translate[self.linguagem_atual]['deactivate_account_confirm'])
+            
         if confirmado:
             try:
                 query = "UPDATE tb_usuario SET situacao = 'desativada' WHERE pk_usuario_id = %s"
-                self.sql.editar(query, (self.get_usuario()["pk_usuario_id"].iloc[0]))
+                self.sql.editar(query, int(self.get_usuario()["pk_usuario_id"].iloc[0]))
 
                 if os.path.exists("lembrete_login.bin"):
                     os.remove("lembrete_login.bin")
                 
-                MessageBox.show_custom_messagebox(self, "information", "Conta desativada", "Conta desativada com sucesso.")
+                MessageBox.show_custom_messagebox(self, tipo="information", title=translate[self.linguagem_atual]['success'], message=translate[self.linguagem_atual]['deactivate_account_information'])
 
                 from src.windows.auth_login_view import Login #importação tardia pra evitar importação circular
                 self.close()
                 self.home_window.close()
-                self.login_window = Login()
+                self.login_window = Login(self.linguagem_atual)
                 self.login_window.show()
             except Exception as e:
-                MessageBox.show_custom_messagebox(self, "error", "Erro", "Não foi possível desativar a conta.")
+                MessageBox.show_custom_messagebox(self, tipo="error", title=translate[self.linguagem_atual]['error'], message=translate[self.linguagem_atual]['account_deactivation_error'])
                 print(e)
                 return

@@ -1,45 +1,55 @@
+import os
 from pathlib import Path
-from PyQt6 import uic
-from PyQt6.QtWidgets import QApplication, QDialog, QTableWidgetItem
-from PyQt6.QtCore import pyqtSignal
-
-from datetime import datetime
 import sys
-import re
+from PyQt6 import uic
+from PyQt6.QtWidgets import QApplication, QDialog, QTableWidgetItem, QHeaderView
+from PyQt6.QtCore import pyqtSignal, QTranslator
+
+import json
 
 from src.util.qt_util import MessageBox
 from src.util.db_manager import ConsultaSQL
+from src.util.language_manager import LanguageManager as lm
+from src.util.formatter import Formatter
 from src.util import icons_rc
 
 from src.windows.transaction_form_view import NewTransactionWindow
 
-UI_PATH = Path(__file__).resolve().parent.parent.parent / "ui" / "transactions.ui"
+from dotenv import load_dotenv
+
+load_dotenv()
+DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
+
+if DEBUG_MODE:
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
+else:
+    BASE_DIR = Path(sys.executable).parent
+
+DATA_PATH = BASE_DIR / "src" / "util" / "data_util.json"
+UI_PATH = BASE_DIR / "ui" / "transactions.ui"
+
+with open(DATA_PATH, "r", encoding="utf-8") as f:
+            data_util = json.load(f)
+            translate = data_util['traducao']['mensage_box']
 
 db = ConsultaSQL()
 
-def tratar_data_para_banco(data_str):
-    return datetime.strptime(data_str, "%d/%m/%Y").strftime("%Y-%m-%d")
-
-def tratar_data_para_exibir(data_str):
-    return datetime.strptime(data_str, "%Y-%m-%d").strftime("%d/%m/%Y")
-
-def tratar_valor_para_banco(valor_str):
-    valor_limpo = re.sub(r'[^\d,]', '', valor_str) 
-    valor = valor_limpo.replace('.', '').replace(',', '.')
-    return float(valor)
-
-def tratar_valor_para_exibir(valor_float):
-    return f"R$ {valor_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
 class TransactionsWindow(QDialog):
-    
     grafico_atualizado = pyqtSignal()
     transacoes_atualizadas = pyqtSignal()
     totais_atualizados = pyqtSignal()
         
-    def __init__(self, cliente_id):
+    def __init__(self, cliente_id, linguagem_atual):
         super().__init__()
+
+        translator = QTranslator()
+        self.linguagem_atual = linguagem_atual
+        lm.trocar_linguagem(QApplication.instance(), translator, linguagem_atual)
+
         uic.loadUi(UI_PATH, self)
+
+        self.tabela_Registros.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.tabela_Registros.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         
         self.novo_registro_window = None
 
@@ -54,8 +64,14 @@ class TransactionsWindow(QDialog):
 
     def abrir_novo_registro(self):
         if not self.novo_registro_window:
-            self.novo_registro_window = NewTransactionWindow(self, self.cliente_id)
+            self.novo_registro_window = NewTransactionWindow(self, self.cliente_id, self.linguagem_atual)
         self.novo_registro_window.exec()
+
+    def traduzir_registro(self, tipo, categoria):
+        traducao = data_util['traducao']['categoria'][self.linguagem_atual]
+        tipo_traduzido = traducao.get(tipo, tipo)
+        categoria_traduzida = traducao.get(categoria, categoria)
+        return tipo_traduzido, categoria_traduzida
 
     def carregar_registros(self):
         try:
@@ -64,12 +80,15 @@ class TransactionsWindow(QDialog):
                 FROM tb_registro
                 WHERE fk_usuario_id = %s
             """
-            registros = db.consultar(query, self.cliente_id)
+            registros = db.consultar(query, int(self.cliente_id))
+
 
             self.tabela_Registros.setRowCount(0)
 
             for row_data in registros:
-                self.adicionar_na_tabela(row_data)
+                transacao_id, nome, tipo, categoria, data_realizada, valor = row_data
+                tipo_traduzido, categoria_traduzida = self.traduzir_registro(tipo, categoria)
+                self.adicionar_na_tabela((transacao_id, nome, tipo_traduzido, categoria_traduzida, data_realizada, valor))
 
             self.atualizar_saldo_total()
 
@@ -85,8 +104,8 @@ class TransactionsWindow(QDialog):
         nome = str(nome).title()
         tipo = str(tipo).capitalize()
         categoria = str(categoria).capitalize()
-        data_formatada = tratar_data_para_exibir(str(data_realizada))
-        valor_formatado = tratar_valor_para_exibir(float(valor))
+        data_formatada = Formatter.format_date_to_display(str(data_realizada))
+        valor_formatado = Formatter.format_value_to_display(float(valor))
 
         itens = [transacao_id, nome, tipo, categoria, data_formatada, valor_formatado]
 
@@ -100,7 +119,11 @@ class TransactionsWindow(QDialog):
         linha_selecionada = self.tabela_Registros.currentRow()
 
         if linha_selecionada < 0:
-            MessageBox.show_custom_messagebox(self, "warning", "Aviso", "Selecione um registro para excluir")
+            MessageBox.show_custom_messagebox(
+                parent=self,
+                tipo="warning",
+                title=translate[self.linguagem_atual]['warning'],
+                message=translate[self.linguagem_atual]['select_record_to_delete'])
             return
 
         transacao_id = self.tabela_Registros.item(linha_selecionada, 0).text()
@@ -109,11 +132,14 @@ class TransactionsWindow(QDialog):
         try:
             transacao_id = int(transacao_id)
         except ValueError:
-            MessageBox.show_custom_messagebox(self, "error", "Erro", "ID inválido para exclusão.")
+            MessageBox.show_custom_messagebox(parent=self, tipo="error", title=translate[self.linguagem_atual]['error'], message=translate[self.linguagem_atual]['invalid_id_delete'])
             return
 
-        confirmado = MessageBox.ask_confirmation(self, "Confirmação", f"Tem certeza que deseja excluir o registro \"{nome_registro}\"?")
-
+        confirmado = MessageBox.ask_confirmation(
+            parent=self,
+            title="confirmation",
+            message=translate[self.linguagem_atual]['delete_confirmation'].format(nome_registro=nome_registro))
+    
         if confirmado:
             try:
                 sql = "DELETE FROM tb_registro WHERE transacao_id = %s"
@@ -125,24 +151,33 @@ class TransactionsWindow(QDialog):
                 self.transacoes_atualizadas.emit()
                 self.totais_atualizados.emit()
 
-                MessageBox.show_custom_messagebox(self, "information", "Sucesso", f"Registro \"{nome_registro}\" excluído com sucesso.")
+                MessageBox.show_custom_messagebox(
+                parent=self,
+                tipo="information",
+                title=translate[self.linguagem_atual]['success'],
+                message=translate[self.linguagem_atual]['delete_success'].format(nome_registro=nome_registro))
 
             except Exception as erro:
-                MessageBox.show_custom_messagebox(self, "error", "Erro", f"Erro ao excluir registro:\n{erro}")
+                MessageBox.show_custom_messagebox(
+                parent=self,
+                tipo="error",
+                title=translate[self.linguagem_atual]['error'], 
+                message=translate[self.linguagem_atual]['delete_error'])
+                print(erro)
 
     def atualizar_saldo_total(self):
         try:
             query = "SELECT tipo, valor FROM tb_registro WHERE fk_usuario_id = %s"
-            df = db.pd_consultar(query, self.cliente_id)
+            df = db.pd_consultar(query, int(self.cliente_id))
 
             if df.empty:
                 saldo = 0
             else:
                 entradas = df[df['tipo'] == 'entrada']['valor'].sum()
-                saidas = df[df['tipo'] == 'saída']['valor'].sum()
+                saidas = df[df['tipo'] == 'saida']['valor'].sum()
                 saldo = entradas - saidas
 
-            saldo_formatado = tratar_valor_para_exibir(saldo)
+            saldo_formatado = Formatter.format_value_to_display(saldo)
 
             self.lbl_valor_total.setText(saldo_formatado)
 
